@@ -307,7 +307,6 @@ fn rewrite_html(input: &str, base: &Url, sid: &str) -> (String, Option<String>) 
             }
         })
         .to_string();
-    output = rewrite_css(&output, base);
 
     let nonce = random_nonce();
     let bootstrap = format!(
@@ -379,29 +378,40 @@ fn rewrite_css(input: &str, base: &Url) -> String {
 }
 
 fn rewrite_javascript(input: &str, base: &Url) -> String {
-    JS_URL_LITERAL_RE
-        .replace_all(input, |caps: &Captures| {
-            let (quote, raw_url) = if let Some(url) = caps.name("url_dq") {
-                ("\"", url.as_str())
-            } else if let Some(url) = caps.name("url_sq") {
-                ("'", url.as_str())
-            } else {
-                return caps
-                    .get(0)
-                    .map(|m| m.as_str())
-                    .unwrap_or_default()
-                    .to_string();
-            };
-            match resolve_and_proxy(raw_url, base) {
-                Some(rewritten) => format!("{quote}{rewritten}{quote}"),
-                None => caps
-                    .get(0)
-                    .map(|m| m.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-            }
-        })
-        .to_string()
+    let mut output = input.to_string();
+    output = rewrite_js_string_urls(&output, &JS_IMPORT_FROM_DQ_RE, "\"", "\"", base);
+    output = rewrite_js_string_urls(&output, &JS_IMPORT_FROM_SQ_RE, "'", "'", base);
+    output = rewrite_js_string_urls(&output, &JS_EXPORT_FROM_DQ_RE, "\"", "\"", base);
+    output = rewrite_js_string_urls(&output, &JS_EXPORT_FROM_SQ_RE, "'", "'", base);
+    output = rewrite_js_string_urls(&output, &JS_DYNAMIC_IMPORT_DQ_RE, "\"", "\"", base);
+    output = rewrite_js_string_urls(&output, &JS_DYNAMIC_IMPORT_SQ_RE, "'", "'", base);
+    output = rewrite_js_string_urls(&output, &JS_IMPORT_SCRIPTS_DQ_RE, "\"", "\"", base);
+    output = rewrite_js_string_urls(&output, &JS_IMPORT_SCRIPTS_SQ_RE, "'", "'", base);
+    output = rewrite_js_string_urls(&output, &JS_NEW_WORKER_DQ_RE, "\"", "\"", base);
+    rewrite_js_string_urls(&output, &JS_NEW_WORKER_SQ_RE, "'", "'", base)
+}
+
+fn rewrite_js_string_urls(
+    input: &str,
+    re: &Regex,
+    open_quote: &str,
+    close_quote: &str,
+    base: &Url,
+) -> String {
+    re.replace_all(input, |caps: &Captures| {
+        let prefix = caps.name("prefix").map(|m| m.as_str()).unwrap_or_default();
+        let suffix = caps.name("suffix").map(|m| m.as_str()).unwrap_or_default();
+        let raw_url = caps.name("url").map(|m| m.as_str()).unwrap_or_default();
+        match resolve_and_proxy(raw_url, base) {
+            Some(rewritten) => format!("{prefix}{open_quote}{rewritten}{close_quote}{suffix}"),
+            None => caps
+                .get(0)
+                .map(|m| m.as_str())
+                .unwrap_or_default()
+                .to_string(),
+        }
+    })
+    .to_string()
 }
 
 fn rewrite_csp(input: &str, nonce: &str) -> String {
@@ -624,9 +634,45 @@ static CSS_IMPORT_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"@import\s+(?:"(?P<url_dq>[^"]+)"|'(?P<url_sq>[^']+)')"#)
         .expect("valid CSS import regex")
 });
-static JS_URL_LITERAL_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#""(?P<url_dq>(?:https?://[^"]+|/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+|\.\.?/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+))"|'(?P<url_sq>(?:https?://[^']+|/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+|\.\.?/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+))'"#)
-        .expect("valid JS URL literal regex")
+static JS_IMPORT_FROM_DQ_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?m)(?P<prefix>\bimport\s+(?:[^;\n]*?\s+from\s+)?)"(?P<url>[^"\n]+)""#)
+        .expect("valid JS import from double-quote regex")
+});
+static JS_IMPORT_FROM_SQ_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?m)(?P<prefix>\bimport\s+(?:[^;\n]*?\s+from\s+)?)'(?P<url>[^'\n]+)'"#)
+        .expect("valid JS import from single-quote regex")
+});
+static JS_EXPORT_FROM_DQ_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?m)(?P<prefix>\bexport\s+(?:[^;\n]*?\s+from\s+)?)"(?P<url>[^"\n]+)""#)
+        .expect("valid JS export from double-quote regex")
+});
+static JS_EXPORT_FROM_SQ_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?m)(?P<prefix>\bexport\s+(?:[^;\n]*?\s+from\s+)?)'(?P<url>[^'\n]+)'"#)
+        .expect("valid JS export from single-quote regex")
+});
+static JS_DYNAMIC_IMPORT_DQ_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?m)(?P<prefix>\bimport\(\s*)"(?P<url>[^"\n]+)"(?P<suffix>\s*\))"#)
+        .expect("valid JS dynamic import double-quote regex")
+});
+static JS_DYNAMIC_IMPORT_SQ_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?m)(?P<prefix>\bimport\(\s*)'(?P<url>[^'\n]+)'(?P<suffix>\s*\))"#)
+        .expect("valid JS dynamic import single-quote regex")
+});
+static JS_IMPORT_SCRIPTS_DQ_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?m)(?P<prefix>\bimportScripts\(\s*)"(?P<url>[^"\n]+)""#)
+        .expect("valid JS importScripts double-quote regex")
+});
+static JS_IMPORT_SCRIPTS_SQ_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?m)(?P<prefix>\bimportScripts\(\s*)'(?P<url>[^'\n]+)'"#)
+        .expect("valid JS importScripts single-quote regex")
+});
+static JS_NEW_WORKER_DQ_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?m)(?P<prefix>\bnew\s+(?:Shared)?Worker\(\s*)"(?P<url>[^"\n]+)""#)
+        .expect("valid JS new Worker double-quote regex")
+});
+static JS_NEW_WORKER_SQ_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?m)(?P<prefix>\bnew\s+(?:Shared)?Worker\(\s*)'(?P<url>[^'\n]+)'"#)
+        .expect("valid JS new Worker single-quote regex")
 });
 static HEAD_CLOSE_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)</head>").expect("valid head close regex"));

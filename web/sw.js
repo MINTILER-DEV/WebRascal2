@@ -36,44 +36,50 @@ async function handleFetch(event) {
 }
 
 function rewriteRequest(request) {
-  const method = request.method.toUpperCase();
-  if (method !== "GET" && method !== "HEAD") return null;
-
   const requestUrl = new URL(request.url);
   if (requestUrl.protocol !== "http:" && requestUrl.protocol !== "https:") return null;
 
   const scopeOrigin = new URL(self.registration.scope).origin;
   const sameOrigin = requestUrl.origin === scopeOrigin;
 
-  let target = requestUrl;
+  let proxiedPath = null;
   if (sameOrigin) {
     if (shouldPassThrough(requestUrl.pathname)) return null;
-    const base = targetFromReferrer(request.referrer);
-    if (!base) return null;
-    target = new URL(`${requestUrl.pathname}${requestUrl.search}${requestUrl.hash}`, base);
+
+    if (requestUrl.pathname.startsWith("/proxy/")) {
+      const decoded = decodeProxiedTarget(requestUrl.pathname);
+      if (decoded) {
+        proxiedPath = `${requestUrl.pathname}${requestUrl.search}${requestUrl.hash}`;
+      } else {
+        const base = targetFromReferrer(request.referrer);
+        if (!base) return null;
+        const relative = requestUrl.pathname.slice("/proxy/".length);
+        const target = new URL(`${relative}${requestUrl.search}${requestUrl.hash}`, base);
+        proxiedPath = encodeProxyPath(target.toString());
+      }
+    } else if (requestUrl.pathname.startsWith("/ws/")) {
+      proxiedPath = `${requestUrl.pathname}${requestUrl.search}${requestUrl.hash}`;
+    } else {
+      const base = targetFromReferrer(request.referrer);
+      if (!base) return null;
+      const target = new URL(`${requestUrl.pathname}${requestUrl.search}${requestUrl.hash}`, base);
+      proxiedPath = encodeProxyPath(target.toString());
+    }
+  } else {
+    proxiedPath = encodeProxyPath(requestUrl.toString());
   }
 
-  let proxiedPath = encodeProxyPath(target.toString());
   if (sid) {
-    const joiner = proxiedPath.includes("?") ? "&" : "?";
-    proxiedPath = `${proxiedPath}${joiner}__sid=${encodeURIComponent(sid)}`;
+    proxiedPath = withSid(proxiedPath, sid);
   }
 
-  const headers = new Headers(request.headers);
-  if (sid) headers.set("x-proxy-session", sid);
-
-  return new Request(proxiedPath, {
-    method: request.method,
-    headers,
-    mode: request.mode,
-    credentials: request.credentials,
-    cache: request.cache,
-    redirect: request.redirect,
-    referrer: request.referrer,
-    referrerPolicy: request.referrerPolicy,
-    integrity: request.integrity,
-    keepalive: request.keepalive,
-  });
+  let proxiedRequest = new Request(proxiedPath, request);
+  if (sid) {
+    const headers = new Headers(proxiedRequest.headers);
+    headers.set("x-proxy-session", sid);
+    proxiedRequest = new Request(proxiedRequest, { headers });
+  }
+  return proxiedRequest;
 }
 
 function targetFromReferrer(referrer) {
@@ -105,9 +111,28 @@ function shouldPassThrough(pathname) {
     pathname === "/favicon.ico" ||
     pathname === "/healthz" ||
     pathname.startsWith("/pkg/") ||
-    pathname.startsWith("/proxy/") ||
     pathname.startsWith("/ws/")
   );
+}
+
+function decodeProxiedTarget(pathname) {
+  if (!pathname.startsWith("/proxy/")) return null;
+  const encoded = pathname.slice("/proxy/".length);
+  if (!encoded) return null;
+  try {
+    const decoded = decodeBase64Url(encoded);
+    const parsed = new URL(decoded);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function withSid(path, sessionId) {
+  const parsed = new URL(path, self.registration.scope);
+  parsed.searchParams.set("__sid", sessionId);
+  return `${parsed.pathname}${parsed.search}${parsed.hash}`;
 }
 
 function encodeBase64Url(value) {
