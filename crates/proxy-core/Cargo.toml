@@ -1,0 +1,10 @@
+[package]
+name = "proxy-core"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+base64 = "0.22"
+url = "2.5"
+

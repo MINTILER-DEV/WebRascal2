@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Rust/WASM Scramjet-Style Proxy</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      }
+      body {
+        margin: 0;
+        display: grid;
+        grid-template-rows: auto 1fr;
+        min-height: 100vh;
+      }
+      form {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 0.75rem;
+        padding: 1rem;
+        border-bottom: 1px solid #d8d8d8;
+        background: #f6f8fc;
+      }
+      input {
+        font-size: 0.95rem;
+        padding: 0.65rem 0.75rem;
+      }
+      button {
+        font-size: 0.95rem;
+        padding: 0.65rem 1rem;
+        cursor: pointer;
+      }
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <form id="proxy-form">
+      <input id="target-url" type="url" placeholder="https://example.org" required />
+      <button type="submit">Open</button>
+    </form>
+    <iframe id="proxy-frame" title="proxied content"></iframe>
+
+    <script type="module">
+      const input = document.getElementById("target-url");
+      const frame = document.getElementById("proxy-frame");
+      const form = document.getElementById("proxy-form");
+
+      const sidKey = "__proxy_sid";
+      if (!sessionStorage.getItem(sidKey)) {
+        sessionStorage.setItem(sidKey, `${Date.now()}${Math.random()}`.replace(".", ""));
+      }
+      const sid = sessionStorage.getItem(sidKey);
+
+      const toBase64Url = (value) => {
+        const bytes = new TextEncoder().encode(value);
+        let binary = "";
+        for (const b of bytes) binary += String.fromCharCode(b);
+        return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+      };
+      const toProxyPath = (raw) => `/proxy/${toBase64Url(new URL(raw).toString())}?__sid=${encodeURIComponent(sid)}`;
+
+      if ("serviceWorker" in navigator) {
+        await navigator.serviceWorker.register("/sw.js", { type: "module", scope: "/" });
+        await navigator.serviceWorker.ready;
+      }
+
+      const openTarget = (rawUrl) => {
+        const normalized = new URL(rawUrl).toString();
+        input.value = normalized;
+        frame.src = toProxyPath(normalized);
+      };
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        openTarget(input.value);
+      });
+
+      const initial = new URLSearchParams(location.search).get("url");
+      if (initial) openTarget(initial);
+    </script>
+  </body>
+</html>
+

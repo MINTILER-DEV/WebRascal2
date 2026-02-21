@@ -1,0 +1,19 @@
+[package]
+name = "proxy-server"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+axum = { version = "0.7", features = ["ws"] }
+futures-util = "0.3"
+http = "1"
+once_cell = "1.19"
+proxy-core = { path = "../proxy-core" }
+rand = "0.8"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["brotli", "deflate", "gzip", "http2", "json", "rustls-tls"] }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+tower-http = { version = "0.6", features = ["fs", "trace"] }
+url = "2.5"

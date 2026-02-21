@@ -1,0 +1,13 @@
+[workspace]
+members = [
+  "crates/proxy-core",
+  "crates/server",
+  "crates/client-wasm",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+version = "0.1.0"
+
