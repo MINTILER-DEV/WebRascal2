@@ -286,8 +286,17 @@ fn rewrite_html(input: &str, base: &Url, sid: &str) -> (String, Option<String>) 
     let mut output = HTML_ATTR_RE
         .replace_all(input, |caps: &Captures| {
             let attr = caps.name("attr").map(|m| m.as_str()).unwrap_or_default();
-            let quote = caps.name("quote").map(|m| m.as_str()).unwrap_or("\"");
-            let raw_url = caps.name("url").map(|m| m.as_str()).unwrap_or_default();
+            let (quote, raw_url) = if let Some(url) = caps.name("url_dq") {
+                ("\"", url.as_str())
+            } else if let Some(url) = caps.name("url_sq") {
+                ("'", url.as_str())
+            } else {
+                return caps
+                    .get(0)
+                    .map(|m| m.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+            };
             match resolve_and_proxy(raw_url, base) {
                 Some(rewritten) => format!("{attr}{quote}{rewritten}{quote}"),
                 None => caps
@@ -320,8 +329,19 @@ fn rewrite_html(input: &str, base: &Url, sid: &str) -> (String, Option<String>) 
 fn rewrite_css(input: &str, base: &Url) -> String {
     let with_url = CSS_URL_RE
         .replace_all(input, |caps: &Captures| {
-            let quote = caps.name("quote").map(|m| m.as_str()).unwrap_or("");
-            let raw_url = caps.name("url").map(|m| m.as_str()).unwrap_or_default();
+            let (quote, raw_url) = if let Some(url) = caps.name("url_dq") {
+                ("\"", url.as_str())
+            } else if let Some(url) = caps.name("url_sq") {
+                ("'", url.as_str())
+            } else if let Some(url) = caps.name("url_bare") {
+                ("", url.as_str().trim())
+            } else {
+                return caps
+                    .get(0)
+                    .map(|m| m.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+            };
             match resolve_and_proxy(raw_url, base) {
                 Some(rewritten) => format!("url({quote}{rewritten}{quote})"),
                 None => caps
@@ -335,8 +355,17 @@ fn rewrite_css(input: &str, base: &Url) -> String {
 
     CSS_IMPORT_RE
         .replace_all(&with_url, |caps: &Captures| {
-            let quote = caps.name("quote").map(|m| m.as_str()).unwrap_or("\"");
-            let raw_url = caps.name("url").map(|m| m.as_str()).unwrap_or_default();
+            let (quote, raw_url) = if let Some(url) = caps.name("url_dq") {
+                ("\"", url.as_str())
+            } else if let Some(url) = caps.name("url_sq") {
+                ("'", url.as_str())
+            } else {
+                return caps
+                    .get(0)
+                    .map(|m| m.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+            };
             match resolve_and_proxy(raw_url, base) {
                 Some(rewritten) => format!("@import {quote}{rewritten}{quote}"),
                 None => caps
@@ -352,8 +381,17 @@ fn rewrite_css(input: &str, base: &Url) -> String {
 fn rewrite_javascript(input: &str, base: &Url) -> String {
     JS_URL_LITERAL_RE
         .replace_all(input, |caps: &Captures| {
-            let quote = caps.name("quote").map(|m| m.as_str()).unwrap_or("\"");
-            let raw_url = caps.name("url").map(|m| m.as_str()).unwrap_or_default();
+            let (quote, raw_url) = if let Some(url) = caps.name("url_dq") {
+                ("\"", url.as_str())
+            } else if let Some(url) = caps.name("url_sq") {
+                ("'", url.as_str())
+            } else {
+                return caps
+                    .get(0)
+                    .map(|m| m.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+            };
             match resolve_and_proxy(raw_url, base) {
                 Some(rewritten) => format!("{quote}{rewritten}{quote}"),
                 None => caps
@@ -572,20 +610,22 @@ fn should_drop_response_header(name: &str) -> bool {
 
 static HTML_ATTR_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
-        r#"(?i)(?P<attr>\b(?:href|src|action|poster|data)\b\s*=\s*)(?P<quote>["'])(?P<url>[^"']+)(?P=quote)"#,
+        r#"(?i)(?P<attr>\b(?:href|src|action|poster|data)\b\s*=\s*)(?:"(?P<url_dq>[^"]+)"|'(?P<url_sq>[^']+)')"#,
     )
     .expect("valid HTML attr regex")
 });
 static CSS_URL_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"url\(\s*(?P<quote>["']?)(?P<url>[^"')]+)(?P=quote)\s*\)"#)
-        .expect("valid CSS url regex")
+    Regex::new(
+        r#"url\(\s*(?:"(?P<url_dq>[^"]+)"|'(?P<url_sq>[^']+)'|(?P<url_bare>[^"'()\s][^)]*))\s*\)"#,
+    )
+    .expect("valid CSS url regex")
 });
 static CSS_IMPORT_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"@import\s+(?P<quote>["'])(?P<url>[^"']+)(?P=quote)"#)
+    Regex::new(r#"@import\s+(?:"(?P<url_dq>[^"]+)"|'(?P<url_sq>[^']+)')"#)
         .expect("valid CSS import regex")
 });
 static JS_URL_LITERAL_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"(?P<quote>["'])(?P<url>(?:https?://[^"']+|/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+|\.\.?/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+))(?P=quote)"#)
+    Regex::new(r#""(?P<url_dq>(?:https?://[^"]+|/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+|\.\.?/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+))"|'(?P<url_sq>(?:https?://[^']+|/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+|\.\.?/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+))'"#)
         .expect("valid JS URL literal regex")
 });
 static HEAD_CLOSE_RE: Lazy<Regex> =
